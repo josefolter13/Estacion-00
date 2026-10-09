@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0b0e11">
+<title>Grabadora de estación</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+/* Visor de cámara a pantalla completa con guías superpuestas. Un solo tema oscuro, pensado para usar en terreno. */
+:root{
+  --bg:#0b0e11; --panel:rgba(11,14,17,.72); --panel-solid:#141a20; --line:rgba(255,255,255,.16);
+  --fg:#eef2f5; --muted:#9aa8b4; --accent:#f2a33a; --ok:#4cc38a; --warn:#f2c94c; --bad:#ef6b5b;
+  --f-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-num:ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);overflow:hidden;-webkit-tap-highlight-color:transparent;user-select:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+#hud{position:fixed;inset:0;pointer-events:none}
+#hud > *{pointer-events:auto}
+
+/* mensaje principal */
+#msg{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:10px 20px;font-size:clamp(15px,2.2vw,20px);font-weight:600;
+  white-space:nowrap;max-width:calc(100% - 32px);overflow:hidden;text-overflow:ellipsis;backdrop-filter:blur(8px);transition:background .25s,color .25s}
+#msg.ok{background:rgba(76,195,138,.9);color:#06140d;border-color:transparent}
+#msg.warn{background:rgba(242,201,76,.92);color:#1d1603;border-color:transparent}
+#msg.bad{background:rgba(239,107,91,.92);color:#1f0603;border-color:transparent}
+
+/* horizonte */
+#level{position:absolute;left:50%;top:50%;width:min(70vw,900px);height:0;transform:translate(-50%,-50%);pointer-events:none}
+#horizon{position:absolute;left:0;right:0;top:-2px;height:4px;border-radius:2px;background:var(--bad);box-shadow:0 0 0 1px rgba(0,0,0,.35);transition:background .2s}
+#horizon.ok{background:var(--ok)}
+.tick{position:absolute;top:-14px;width:4px;height:28px;border-radius:2px;background:rgba(255,255,255,.85);box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+.tick.l{left:-28px}.tick.r{right:-28px}
+#pitchMark{position:absolute;left:50%;width:44px;height:44px;margin-left:-22px;margin-top:-22px;border:3px solid rgba(255,255,255,.9);border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.35);transition:border-color .2s}
+#pitchMark.ok{border-color:var(--ok)}
+#pitchBand{position:absolute;left:50%;width:120px;margin-left:-60px;border:2px dashed rgba(255,255,255,.55);border-radius:10px}
+
+/* cobertura */
+#ringBox{position:absolute;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:10px;backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;gap:4px}
+#ring{width:clamp(130px,17vw,200px);height:clamp(130px,17vw,200px);display:block}
+#ringTxt{font-family:var(--f-num);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+#ringTxt b{color:var(--fg)}
+
+/* velocidad */
+#speedBox{position:absolute;left:calc(16px + env(safe-area-inset-left,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));
+  background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:12px 14px;backdrop-filter:blur(8px);width:clamp(170px,22vw,260px)}
+#speedBox .lbl{font-size:12px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+#speedBar{position:relative;height:14px;border-radius:7px;margin:10px 0 6px;
+  background:linear-gradient(90deg,rgba(242,201,76,.55) 0 15%,rgba(76,195,138,.6) 15% 62%,rgba(239,107,91,.6) 62% 100%)}
+#speedNeedle{position:absolute;top:-5px;width:4px;height:24px;border-radius:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.5);left:0;transition:left .1s linear}
+#speedVal{font-family:var(--f-num);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+#speedVal b{color:var(--fg);font-size:18px}
+
+/* botones laterales */
+#side{position:absolute;right:calc(16px + env(safe-area-inset-right,0px));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:14px}
+#rec{width:84px;height:84px;border-radius:50%;border:5px solid #fff;background:transparent;display:grid;place-items:center;padding:0}
+#rec i{display:block;width:62px;height:62px;border-radius:50%;background:var(--bad);transition:all .2s}
+#rec.on i{width:32px;height:32px;border-radius:8px}
+#timer{font-family:var(--f-num);font-size:15px;background:var(--panel);border-radius:8px;padding:3px 8px;font-variant-numeric:tabular-nums}
+#exit{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px}
+
+/* pantallas */
+.screen{position:fixed;inset:0;display:grid;place-items:center;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));background:var(--bg);overflow:auto}
+.card{width:min(860px,100%);display:grid;gap:22px}
+.card h1{font-size:clamp(24px,3.4vw,34px);margin:0;letter-spacing:-.01em;text-wrap:balance}
+.card h1 small{display:block;font-size:14px;font-weight:500;color:var(--accent);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:22px}
+.tips{margin:0;padding:0;list-style:none;display:grid;gap:10px;color:var(--muted);font-size:15px;line-height:1.45}
+.tips li{display:grid;grid-template-columns:28px 1fr;gap:8px}
+.tips li span{font-family:var(--f-num);color:var(--accent);font-weight:600}
+.tips b{color:var(--fg);font-weight:600}
+fieldset{border:1px solid var(--line);border-radius:14px;padding:14px;margin:0;display:grid;gap:10px;min-width:0}
+legend{padding:0 6px;font-size:13px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
+.seg{display:flex;flex-wrap:wrap;gap:8px}
+.seg input{position:absolute;opacity:0;pointer-events:none}
+.seg label{flex:1 1 auto;text-align:center;border:1px solid var(--line);border-radius:10px;padding:12px 10px;font-size:15px;cursor:pointer;min-width:72px}
+.seg input:checked + label{background:var(--accent);color:#1a1205;border-color:var(--accent);font-weight:600}
+.seg input:focus-visible + label{outline:3px solid var(--accent);outline-offset:2px}
+.primary{background:var(--accent);color:#1a1205;border:0;border-radius:14px;padding:16px 22px;font-size:18px;font-weight:700}
+.ghost{background:transparent;border:1px solid var(--line);border-radius:14px;padding:14px 18px;font-size:16px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.note{font-size:13px;color:var(--muted);line-height:1.45;margin:0}
+#err{color:var(--bad);font-size:14px;margin:0}
+
+#doneView video{width:100%;max-height:44vh;border-radius:14px;background:#000}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.stat .k{font-size:12px;color:var(--muted);letter-spacing:.05em;text-transform:uppercase}
+.stat .v{font-family:var(--f-num);font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+.v.ok{color:var(--ok)}.v.warn{color:var(--warn)}.v.bad{color:var(--bad)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<video id="cam" playsinline muted autoplay></video>
+
+<div id="hud" hidden>
+  <div id="msg">Prepara la toma</div>
+  <div id="level">
+    <div id="pitchBand"></div>
+    <div id="pitchMark"></div>
+    <div id="horizon"></div>
+    <div class="tick l"></div><div class="tick r"></div>
+  </div>
+  <div id="speedBox">
+    <div class="lbl">Velocidad de giro</div>
+    <div id="speedBar"><div id="speedNeedle"></div></div>
+    <div id="speedVal"><b>0</b> °/s · ideal 5 a 20</div>
+  </div>
+  <div id="ringBox">
+    <canvas id="ring" width="400" height="400" aria-label="Cobertura del giro"></canvas>
+    <div id="ringTxt"><b>0°</b> de 180°</div>
+  </div>
+  <div id="side">
+    <button id="exit" type="button">Volver</button>
+    <button id="rec" type="button" aria-label="Grabar"><i></i></button>
+    <div id="timer">00:00</div>
+  </div>
+</div>
+
+<section id="startView" class="screen">
+  <div class="card">
+    <h1><small>Estación 3D</small>Grabadora de estación</h1>
+    <div class="cols">
+      <ol class="tips">
+        <li><span>1</span><div>Párate en el punto que quieres registrar y <b>no te muevas de ahí</b>.</div></li>
+        <li><span>2</span><div>Sostén la tablet <b>horizontal, con los brazos estirados</b>, a la altura del pecho.</div></li>
+        <li><span>3</span><div><b>Gira con todo el cuerpo</b>, no solo con las muñecas, en un solo sentido.</div></li>
+        <li><span>4</span><div>Gira <b>lento y parejo</b>: la aguja de velocidad debe quedar en verde.</div></li>
+        <li><span>5</span><div>Mantén la <b>línea del horizonte en verde</b> y el círculo dentro del recuadro.</div></li>
+      </ol>
+      <div style="display:grid;gap:14px;min-width:0">
+        <fieldset>
+          <legend>Rango a cubrir</legend>
+          <div class="seg">
+            <input type="radio" name="range" id="r180" value="180" checked><label for="r180">180°</label>
+            <input type="radio" name="range" id="r270" value="270"><label for="r270">270°</label>
+            <input type="radio" name="range" id="r360" value="360"><label for="r360">360°</label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Segunda vuelta</legend>
+          <div class="seg">
+            <input type="radio" name="pass2" id="p0" value="0" checked><label for="p0">No</label>
+            <input type="radio" name="pass2" id="pu" value="1"><label for="pu">Hacia arriba</label>
+            <input type="radio" name="pass2" id="pd" value="-1"><label for="pd">Hacia abajo</label>
+          </div>
+        </fieldset>
+      </div>
+    </div>
+    <div class="row">
+      <button id="go" class="primary" type="button">Abrir cámara</button>
+      <p class="note">La app pedirá permiso para usar la cámara y los sensores de movimiento.</p>
+    </div>
+    <p id="err" hidden></p>
+  </div>
+</section>
+
+<section id="doneView" class="screen" hidden>
+  <div class="card">
+    <h1><small>Grabación terminada</small><span id="doneTitle">Revisa la toma</span></h1>
+    <video id="playback" controls playsinline></video>
+    <div class="stats" id="stats"></div>
+    <div class="row">
+      <button id="saveVid" class="primary" type="button">Guardar video</button>
+      <button id="saveJson" class="ghost" type="button">Guardar datos de orientación</button>
+      <button id="share" class="ghost" type="button" hidden>Compartir</button>
+      <button id="again" class="ghost" type="button">Grabar otra</button>
+    </div>
+    <p class="note">Se guardan en la carpeta Descargas de la tablet. Para pasarlos al computador usa Google Drive, Quick Share o un cable. No los envíes por WhatsApp, porque reduce la calidad del video.</p>
+  </div>
+</section>
+
+<script>
+(()=>{
+'use strict';
+const $=id=>document.getElementById(id);
+const DEMO=/[?&]demo\b/.test(location.search);
+const D2R=Math.PI/180, R2D=180/Math.PI;
+const BIN=2, NB=360/BIN;
+const SPEED_MIN=5, SPEED_MAX=20, SPEED_BAD=30;        // °/s
+const ROLL_OK=3, PITCH_TOL=10;                         // °
+
+// ---------- estado ----------
+let cfg={range:180,pass2:0};
+let stream=null, track=null, recorder=null, chunks=[], mime='';
+let q=null, haveSensor=false, sensorKind='';
+let head=0, headPrev=null, tPrev=0, speed=0, pitch=0, roll=0;
+let recording=false, recStart=0, startHead=0, pass=1, passDone=[false,false], log=[], wakeLock=null;
+let cov=[new Uint8Array(NB),new Uint8Array(NB)];   // 0 nada, 1 bien, 2 rápido
+let stats={fast:0,tilt:0,samples:0,speedSum:0};
+let blob=null, fileBase='';
+
+// ---------- matemáticas ----------
+function qrot(q,v){ // rota v (dispositivo) al mundo
+  const [x,y,z,w]=q, [vx,vy,vz]=v;
+  const ix=w*vx+y*vz-z*vy, iy=w*vy+z*vx-x*vz, iz=w*vz+x*vy-y*vx, iw=-x*vx-y*vy-z*vz;
+  return [ix*w+iw*-x+iy*-z-iz*-y, iy*w+iw*-y+iz*-x-ix*-z, iz*w+iw*-z+ix*-y-iy*-x];
+}
+function eulerToQuat(a,b,g){ // deviceorientation (Z-X'-Y'') → cuaternión [x,y,z,w]
+  const _x=b*D2R/2,_y=g*D2R/2,_z=a*D2R/2;
+  const cX=Math.cos(_x),cY=Math.cos(_y),cZ=Math.cos(_z),sX=Math.sin(_x),sY=Math.sin(_y),sZ=Math.sin(_z);
+  return [sX*cY*cZ-cX*sY*sZ, cX*sY*cZ+sX*cY*sZ, cX*cY*sZ+sX*sY*cZ, cX*cY*cZ-sX*sY*sZ];
+}
+const wrap=a=>((a+540)%360)-180;
+function screenAngle(){return (screen.orientation&&typeof screen.orientation.angle==='number')?screen.orientation.angle:(window.orientation||0);}
+
+function onQuat(nq,t){
+  q=nq;
+  const fw=qrot(q,[0,0,-1]);                      // la cámara trasera mira hacia -Z del dispositivo
+  const h=-Math.atan2(fw[1],fw[0])*R2D;           // rumbo, crece al girar a la derecha
+  pitch=Math.asin(Math.max(-1,Math.min(1,fw[2])))*R2D;
+  const a=screenAngle()*D2R;
+  const sr=qrot(q,[Math.cos(a),-Math.sin(a),0]);  // eje "derecha" de la pantalla
+  roll=Math.asin(Math.max(-1,Math.min(1,sr[2])))*R2D;
+  if(headPrev!==null){
+    const dt=(t-tPrev)/1000;
+    if(dt>0.005){const s=Math.abs(wrap(h-headPrev))/dt; speed=speed*0.85+s*0.15; headPrev=h; tPrev=t;}
+  }else{headPrev=h;tPrev=t;}
+  head=h;
+  if(recording) sample(t);
+}
+
+// ---------- sensores ----------
+async function startSensors(){
+  if(DEMO){startDemo();return;}
+  if('RelativeOrientationSensor' in window){
+    try{
+      if(navigator.permissions){
+        const r=await Promise.all(['accelerometer','gyroscope'].map(n=>navigator.permissions.query({name:n}).catch(()=>({state:'granted'}))));
+        if(r.some(x=>x.state==='denied'))throw new Error('denied');
+      }
+      const s=new RelativeOrientationSensor({frequency:60,referenceFrame:'device'});
+      await new Promise((res,rej)=>{
+        const to=setTimeout(()=>rej(new Error('timeout')),2500);
+        s.addEventListener('reading',()=>{clearTimeout(to);haveSensor=true;sensorKind='RelativeOrientationSensor';onQuat(s.quaternion.slice(),performance.now());res();},{once:false});
+        s.addEventListener('error',e=>{clearTimeout(to);rej(e.error||e);});
+        s.start();
+      });
+      return;
+    }catch(e){/* se usa el respaldo */}
+  }
+  await new Promise(res=>{
+    const to=setTimeout(res,2500);
+    window.addEventListener('deviceorientation',e=>{
+      if(e.alpha===null)return;
+      haveSensor=true;sensorKind='deviceorientation';
+      onQuat(eulerToQuat(e.alpha,e.beta,e.gamma),performance.now());clearTimeout(to);res();
+    });
+  });
+}
+function startDemo(){ // simula un giro para probar sin tablet
+  haveSensor=true;sensorKind='demo';
+  const t0=performance.now();
+  (function tick(){
+    const t=(performance.now()-t0)/1000;
+    const yaw=-t*12*D2R, p=(pass===2?cfg.pass2*20:0)*D2R+Math.sin(t*0.7)*2*D2R, r=Math.sin(t*1.3)*2.5*D2R;
+    // dispositivo horizontal: rota en Z (rumbo), luego X (cámara mirando al horizonte + inclinación), luego roll
+    const qz=[0,0,Math.sin(yaw/2),Math.cos(yaw/2)], qx=[Math.sin((Math.PI/2+p)/2),0,0,Math.cos((Math.PI/2+p)/2)], qr=[0,0,Math.sin(r/2),Math.cos(r/2)];
+    const m=(a,b)=>[a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
+    onQuat(m(m(qz,qx),qr),performance.now());
+    setTimeout(tick,33);
+  })();
+}
+
+// ---------- cámara ----------
+async function startCamera(){
+  const tries=[
+    {video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},frameRate:{ideal:30}},audio:false},
+    {video:{facingMode:{ideal:'environment'}},audio:false},
+    {video:true,audio:false}];
+  let last;
+  for(const c of tries){try{stream=await navigator.mediaDevices.getUserMedia(c);break;}catch(e){last=e;}}
+  if(!stream)throw last||new Error('Sin cámara');
+  track=stream.getVideoTracks()[0];
+  try{const caps=track.getCapabilities?track.getCapabilities():{};
+    if(caps.focusMode&&caps.focusMode.includes('continuous'))await track.applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}
+  $('cam').srcObject=stream; await $('cam').play().catch(()=>{});
+}
+function pickMime(){
+  const c=['video/mp4;codecs=avc1.640028','video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+  if(!window.MediaRecorder)return '';
+  return c.find(m=>MediaRecorder.isTypeSupported(m))||'';
+}
+
+// ---------- grabación ----------
+function resetCoverage(){cov=[new Uint8Array(NB),new Uint8Array(NB)];pass=1;passDone=[false,false];stats={fast:0,tilt:0,samples:0,speedSum:0};log=[];}
+function startRec(){
+  mime=pickMime();
+  try{recorder=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:12e6}:{videoBitsPerSecond:12e6});}
+  catch(e){recorder=new MediaRecorder(stream);}
+  mime=recorder.mimeType||mime||'video/webm';
+  chunks=[];
+  recorder.ondataavailable=e=>{if(e.data&&e.data.size)chunks.push(e.data);};
+  recorder.onstop=finish;
+  resetCoverage();
+  startHead=head; recStart=performance.now(); recording=true;
+  recorder.start(1000);
+  $('rec').classList.add('on');$('rec').setAttribute('aria-label','Detener');
+  if('wakeLock' in navigator)navigator.wakeLock.request('screen').then(w=>wakeLock=w).catch(()=>{});
+  if(navigator.vibrate)navigator.vibrate(40);
+}
+function stopRec(){
+  if(!recording)return;
+  recording=false;
+  try{recorder.stop();}catch(e){finish();}
+  $('rec').classList.remove('on');$('rec').setAttribute('aria-label','Grabar');
+  if(wakeLock){wakeLock.release().catch(()=>{});wakeLock=null;}
+}
+function targetPitch(){return pass===2?cfg.pass2*20:0;}
+function sample(t){
+  const rel=wrap(head-startHead);
+  const okRoll=Math.abs(roll)<=ROLL_OK*2.5, okPitch=Math.abs(pitch-targetPitch())<=PITCH_TOL+5;
+  const fast=speed>SPEED_BAD;
+  stats.samples++;stats.speedSum+=speed;if(fast)stats.fast++;if(!okRoll)stats.tilt++;
+  if(okRoll&&okPitch){
+    const b=((Math.floor((rel+180)/BIN)%NB)+NB)%NB, arr=cov[pass-1];
+    if(fast){if(arr[b]===0)arr[b]=2;}else arr[b]=1;
+  }
+  log.push([Math.round(t-recStart),+q[0].toFixed(5),+q[1].toFixed(5),+q[2].toFixed(5),+q[3].toFixed(5)]);
+  // avance de pasadas
+  const span=coveredSpan(cov[pass-1]);
+  if(!passDone[pass-1]&&span>=cfg.range-BIN*2){
+    passDone[pass-1]=true;
+    if(navigator.vibrate)navigator.vibrate([60,60,60]);
+    if(pass===1&&cfg.pass2!==0){pass=2;}
+  }
+}
+function coveredSpan(arr){ // mayor tramo continuo cubierto, en grados
+  let n=0;for(let i=0;i<NB;i++)if(arr[i])n++;
+  if(n===NB)return 360;
+  let best=0,run=0;for(let k=0;k<NB*2;k++){if(arr[k%NB]){run++;best=Math.max(best,run);}else run=0;}
+  return Math.min(best,NB)*BIN;
+}
+
+// ---------- interfaz en vivo ----------
+const ring=$('ring'), rc=ring.getContext('2d');
+function drawRing(){
+  const W=ring.width, c=W/2; rc.clearRect(0,0,W,W);
+  const radii=cfg.pass2?[[c-26,22],[c-62,18]]:[[c-40,34]];
+  radii.forEach(([r,w],pi)=>{
+    rc.lineWidth=w;rc.strokeStyle='rgba(255,255,255,.12)';rc.beginPath();rc.arc(c,c,r,0,Math.PI*2);rc.stroke();
+    const arr=cov[pi];
+    for(let i=0;i<NB;i++){if(!arr[i])continue;
+      const a0=((i*BIN-180)-90)*D2R, a1=a0+BIN*D2R+0.01;
+      rc.strokeStyle=arr[i]===1?'#4cc38a':'#f2c94c';rc.beginPath();rc.arc(c,c,r,a0,a1);rc.stroke();}
+    if(recording&&pass===pi+1){ // aguja del rumbo actual
+      const a=(wrap(head-startHead)-90)*D2R;
+      rc.strokeStyle='#fff';rc.lineWidth=5;rc.beginPath();rc.moveTo(c+Math.cos(a)*(r-w/2-4),c+Math.sin(a)*(r-w/2-4));rc.lineTo(c+Math.cos(a)*(r+w/2+4),c+Math.sin(a)*(r+w/2+4));rc.stroke();
+    }
+  });
+  // marca de inicio
+  rc.fillStyle='#f2a33a';rc.beginPath();rc.moveTo(c-9,4);rc.lineTo(c+9,4);rc.lineTo(c,18);rc.closePath();rc.fill();
+  // centro: tablet vista desde arriba
+  rc.save();rc.translate(c,c);rc.rotate(recording?wrap(head-startHead)*D2R:0);
+  rc.fillStyle='rgba(255,255,255,.85)';rc.fillRect(-14,-4,28,8);rc.fillStyle='#f2a33a';rc.beginPath();rc.moveTo(-6,-4);rc.lineTo(6,-4);rc.lineTo(0,-16);rc.closePath();rc.fill();
+  rc.restore();
+}
+function setMsg(t,cls){const m=$('msg');if(m.textContent!==t)m.textContent=t;m.className=cls||'';}
+function fmt(ms){const s=Math.floor(ms/1000);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+let stillSince=0;
+function ui(){
+  requestAnimationFrame(ui);
+  if($('hud').hidden)return;
+  // horizonte e inclinación
+  const lvl=$('level');
+  $('horizon').style.transform='rotate('+(roll).toFixed(2)+'deg)';
+  $('horizon').classList.toggle('ok',Math.abs(roll)<=ROLL_OK);
+  const pxPerDeg=Math.min(innerHeight,innerWidth)/60;
+  const tp=targetPitch();
+  $('pitchMark').style.top=(-(pitch-tp)*pxPerDeg).toFixed(1)+'px';
+  $('pitchMark').classList.toggle('ok',Math.abs(pitch-tp)<=PITCH_TOL);
+  $('pitchBand').style.top=(-PITCH_TOL*pxPerDeg)+'px';$('pitchBand').style.height=(2*PITCH_TOL*pxPerDeg)+'px';
+  // velocidad
+  const frac=Math.min(1,speed/(SPEED_MAX/0.62*1.0));
+  $('speedNeedle').style.left='calc('+(frac*100).toFixed(1)+'% - 2px)';
+  $('speedVal').innerHTML='<b>'+speed.toFixed(0)+'</b> °/s · ideal '+SPEED_MIN+' a '+SPEED_MAX;
+  // cobertura
+  const span=coveredSpan(cov[pass-1]);
+  $('ringTxt').innerHTML=(cfg.pass2?('Vuelta '+pass+' · '):'')+'<b>'+Math.min(span,cfg.range)+'°</b> de '+cfg.range+'°';
+  drawRing();
+  // mensajes, en orden de prioridad
+  if(!haveSensor){setMsg('Sin sensores de movimiento: guías desactivadas','warn');}
+  else if(!recording){
+    if(Math.abs(roll)>ROLL_OK)setMsg('Nivela la tablet: línea en verde','warn');
+    else if(Math.abs(pitch)>PITCH_TOL)setMsg(pitch>0?'Baja un poco la cámara':'Sube un poco la cámara','warn');
+    else setMsg('Todo listo: toca el botón rojo y gira lento');
+  }else{
+    $('timer').textContent=fmt(performance.now()-recStart);
+    const allDone=passDone[0]&&(cfg.pass2===0||passDone[1]);
+    if(speed<1.5){if(!stillSince)stillSince=performance.now();}else stillSince=0;
+    if(allDone)setMsg('¡Cobertura completa! Toca detener','ok');
+    else if(speed>SPEED_BAD)setMsg('Más lento','bad');
+    else if(Math.abs(roll)>ROLL_OK*2.5)setMsg('Endereza la tablet','bad');
+    else if(pass===2&&Math.abs(pitch-tp)>PITCH_TOL)setMsg(cfg.pass2>0?'Segunda vuelta: inclina unos 20° hacia arriba':'Segunda vuelta: inclina unos 20° hacia abajo','warn');
+    else if(Math.abs(pitch-tp)>PITCH_TOL)setMsg(pitch>tp?'Baja un poco la cámara':'Sube un poco la cámara','warn');
+    else if(speed>SPEED_MAX)setMsg('Un poco más lento','warn');
+    else if(stillSince&&performance.now()-stillSince>1500)setMsg('Sigue girando','warn');
+    else if(pass===2)setMsg('Segunda vuelta: recorre de nuevo todo el rango','ok');
+    else setMsg('Bien, sigue así','ok');
+  }
+}
+
+// ---------- fin ----------
+function finish(){
+  const type=(mime||'video/webm').split(';')[0];
+  blob=new Blob(chunks,{type});
+  const d=new Date(),p=n=>String(n).padStart(2,'0');
+  fileBase='estacion_'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'_'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+  const dur=log.length?log[log.length-1][0]:0;
+  const s1=coveredSpan(cov[0]), s2=cfg.pass2?coveredSpan(cov[1]):null;
+  const avg=stats.samples?stats.speedSum/stats.samples:0;
+  const fastPct=stats.samples?100*stats.fast/stats.samples:0, tiltPct=stats.samples?100*stats.tilt/stats.samples:0;
+  const items=[
+    ['Duración',fmt(dur),''],
+    ['Cobertura',Math.min(s1,cfg.range)+'° de '+cfg.range+'°',s1>=cfg.range-4?'ok':'warn'],
+    ...(s2!==null?[['Segunda vuelta',Math.min(s2,cfg.range)+'° de '+cfg.range+'°',s2>=cfg.range-4?'ok':'warn']]:[]),
+    ['Velocidad media',avg.toFixed(0)+' °/s',avg<=SPEED_MAX?'ok':'warn'],
+    ['Tramos muy rápidos',fastPct.toFixed(0)+' %',fastPct<5?'ok':fastPct<15?'warn':'bad'],
+    ['Tablet torcida',tiltPct.toFixed(0)+' %',tiltPct<5?'ok':tiltPct<15?'warn':'bad'],
+  ];
+  $('stats').innerHTML=items.map(([k,v,c])=>'<div class="stat"><div class="k">'+k+'</div><div class="v '+c+'">'+v+'</div></div>').join('');
+  $('doneTitle').textContent=(s1>=cfg.range-4&&fastPct<15)?'Buena toma':'Toma incompleta, revísala';
+  $('playback').src=URL.createObjectURL(blob);
+  $('hud').hidden=true;$('doneView').hidden=false;
+  if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});
+  $('share').hidden=!(navigator.canShare&&navigator.canShare({files:[new File([blob],'a.mp4',{type})]}));
+}
+function ext(){return (blob&&blob.type.includes('mp4'))?'mp4':'webm';}
+function dataJson(){
+  const s=track&&track.getSettings?track.getSettings():{};
+  return JSON.stringify({
+    formato:'estacion-3d/1', creado:new Date().toISOString(), video:fileBase+'.'+ext(), mime,
+    rango_objetivo:cfg.range, segunda_vuelta:cfg.pass2, sensor:sensorKind, angulo_pantalla:screenAngle(),
+    camara:{ancho:s.width,alto:s.height,fps:s.frameRate}, dispositivo:navigator.userAgent,
+    nota:'muestras = [t_ms desde el inicio, qx, qy, qz, qw]; cuaternión dispositivo→mundo (Z arriba); la cámara mira hacia -Z del dispositivo',
+    muestras:log});
+}
+function download(b,name){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},4000);}
+$('saveVid').onclick=()=>download(blob,fileBase+'.'+ext());
+$('saveJson').onclick=()=>download(new Blob([dataJson()],{type:'application/json'}),fileBase+'.json');
+$('share').onclick=async()=>{try{await navigator.share({files:[new File([blob],fileBase+'.'+ext(),{type:blob.type}),new File([dataJson()],fileBase+'.json',{type:'application/json'})],title:fileBase});}catch(e){}};
+$('again').onclick=()=>{$('doneView').hidden=true;openHud();};
+
+// ---------- flujo ----------
+function readCfg(){cfg.range=+document.querySelector('input[name=range]:checked').value;cfg.pass2=+document.querySelector('input[name=pass2]:checked').value;}
+async function openHud(){
+  $('startView').hidden=true;$('hud').hidden=false;resetCoverage();
+  try{await document.documentElement.requestFullscreen({navigationUI:'hide'});}catch(e){}
+  try{await screen.orientation.lock('landscape');}catch(e){}
+}
+$('go').onclick=async()=>{
+  readCfg();$('err').hidden=true;$('go').disabled=true;$('go').textContent='Abriendo…';
+  try{
+    if(!window.isSecureContext&&!DEMO)throw new Error('La app debe abrirse desde una dirección https.');
+    await startCamera();
+    if(!haveSensor)await startSensors();
+    await openHud();
+  }catch(e){
+    $('err').textContent='No se pudo abrir la cámara: '+(e&&e.message?e.message:e)+'. Revisa que Chrome tenga permiso de cámara para este sitio.';
+    $('err').hidden=false;
+  }finally{$('go').disabled=false;$('go').textContent='Abrir cámara';}
+};
+$('rec').onclick=()=>{recording?stopRec():startRec();};
+$('exit').onclick=()=>{if(recording)return;$('hud').hidden=true;$('startView').hidden=false;if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});};
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&recording)stopRec();});
+requestAnimationFrame(ui);
+if('serviceWorker' in navigator&&location.protocol==='https:')navigator.serviceWorker.register('sw.js').catch(()=>{});
+})();
+</script>
+</body>
+</html>
